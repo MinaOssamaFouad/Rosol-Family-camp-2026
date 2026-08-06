@@ -326,6 +326,52 @@
   }
   function hideError(){ errBox.style.display = 'none'; }
 
+  // Asks the Google Apps Script backend "has this name + class already
+  // been registered?" using JSONP (works around Apps Script's lack of
+  // CORS headers for regular fetch reads). Resolves to true/false.
+  function checkDuplicate(name, className){
+    return new Promise((resolve, reject) => {
+      const cbName = 'campDupCheck_' + Date.now() + '_' + Math.floor(Math.random()*1e6);
+      const script = document.createElement('script');
+      let settled = false;
+
+      const cleanup = () => {
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      };
+
+      window[cbName] = (data) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(!!(data && data.exists));
+      };
+
+      script.onerror = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('network'));
+      };
+
+      const url = GAS_URL
+        + '?action=check'
+        + '&name=' + encodeURIComponent(name)
+        + '&className=' + encodeURIComponent(className)
+        + '&callback=' + cbName;
+
+      script.src = url;
+      document.body.appendChild(script);
+
+      setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('timeout'));
+      }, 8000);
+    });
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     hideError();
@@ -348,6 +394,23 @@
     }
 
     submitBtn.disabled = true;
+    submitBtn.textContent = 'جاري التحقق...';
+
+    try{
+      const alreadyRegistered = await checkDuplicate(name, className);
+      if (alreadyRegistered) {
+        showError('هذا الاسم مسجل بالفعل في '+ className +'. إذا كان هذا خطأ، من فضلك راجع المسؤول.');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'تسجيل الاسم';
+        return;
+      }
+    }catch(err){
+      showError('تعذر التحقق من التسجيلات السابقة. تأكد من الاتصال بالإنترنت وحاول مرة أخرى.');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'تسجيل الاسم';
+      return;
+    }
+
     submitBtn.textContent = 'جاري التسجيل...';
 
     try{
